@@ -1,3 +1,5 @@
+module.exports = {createBucket, allowRequest};
+
 function createBucket(capacity, refillRate){
   return {
     capacity: capacity,
