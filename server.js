@@ -3,7 +3,7 @@ const {createBucket, allowRequest} = require('./tokenBucket');
 const {createWindow, allowRequest: allowWindowRequest } = require('./fixedWindow');
 const { createSlidingWindow, allowRequest: allowSlidingRequest } = require('./slidingWindow');
 const {client, connectRedis } = require('./redisClient');
-const { tokenBucketAllow } = require('./redisRateLimiter');
+const { tokenBucketAllow, fixedWindowAllow} = require('./redisRateLimiter');
 
 const app = express();
 const PORT = 3000;
@@ -77,6 +77,21 @@ app.get('/api/redis/token-bucket', async (req, res) => {
         message: 'Too many requests',
         remaining: result.remaining
       });
+    }
+  } catch (err) {
+    console.error('Rate limiter error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+app.get('/api/redis/fixed-window', async (req, res) => {
+  try {
+    const result = await fixedWindowAllow('rate:fixed:global', 10, 60000);
+    if (result.allowed) {
+      res.status(200).json({ message: 'Request allowed', remaining: result.remaining });
+    } else {
+      res.status(429).json({ message: 'Too many requests', remaining: result.remaining });
     }
   } catch (err) {
     console.error('Rate limiter error:', err);

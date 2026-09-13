@@ -24,4 +24,27 @@ async function tokenBucketAllow(key, capacity, refillRate) {
   };
 }
 
+const fixedWindowScript = fs.readFileSync(
+  path.join(__dirname, 'lua', 'fixedWindow.lua'),
+  'utf8'
+);
+
+async function fixedWindowAllow(key, limit, windowSize) {
+  const now = Date.now();
+  const result = await client.eval(fixedWindowScript, {
+    keys: [key],
+    arguments: [
+      String(limit),
+      String(windowSize),
+      String(now)
+    ]
+  });
+
+  return {
+    allowed: result[0] === 1,
+    remaining: result[1]
+  };
+}
+
 module.exports = { tokenBucketAllow };
+module.exports = { tokenBucketAllow, fixedWindowAllow };
