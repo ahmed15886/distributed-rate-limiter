@@ -3,7 +3,7 @@ const {createBucket, allowRequest} = require('./tokenBucket');
 const {createWindow, allowRequest: allowWindowRequest } = require('./fixedWindow');
 const { createSlidingWindow, allowRequest: allowSlidingRequest } = require('./slidingWindow');
 const {client, connectRedis } = require('./redisClient');
-const { tokenBucketAllow, fixedWindowAllow} = require('./redisRateLimiter');
+const { tokenBucketAllow, fixedWindowAllow, slidingWindowAllow} = require('./redisRateLimiter');
 
 const app = express();
 const PORT = 3000;
@@ -12,6 +12,7 @@ const PORT = 3000;
 // (we'll move this to Redis later)
 const bucket = createBucket(10,1); // 10 tokens, refill 1/sec
 const window = createWindow(10, 60000); // 10 requests per 60 seconds
+const slidingWindow = createSlidingWindow(10, 60000);
 
 app.get('/api/token-bucket', (req, res)=> {
   const result = allowRequest(bucket);
@@ -98,6 +99,21 @@ app.get('/api/redis/fixed-window', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
+app.get('/api/redis/sliding-window', async (req, res) => {
+  try {
+    const result = await slidingWindowAllow('rate:sliding:global', 10, 60000);
+    if (result.allowed) {
+      res.status(200).json({ message: 'Request allowed', remaining: result.remaining });
+    } else {
+      res.status(429).json({ message: 'Too many requests', remaining: result.remaining });
+    }
+  } catch (err) {
+    console.error('Rate limiter error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 
 async function startServer() {
   await connectRedis();

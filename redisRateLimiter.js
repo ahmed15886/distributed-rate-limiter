@@ -46,5 +46,27 @@ async function fixedWindowAllow(key, limit, windowSize) {
   };
 }
 
-module.exports = { tokenBucketAllow };
-module.exports = { tokenBucketAllow, fixedWindowAllow };
+const slidingWindowScript = fs.readFileSync(
+  path.join(__dirname,'lua', 'slidingWindow.lua'),
+  'utf8'
+);
+
+async function slidingWindowAllow(key, limit, windowSize){
+  const now = Date.now();
+  const result = await client.eval(slidingWindowScript, {
+    keys: [key],
+    arguments: [
+      String(limit),
+      String(windowSize),
+      String(now)
+    ]
+  });
+  return {
+    allowed: result[0] === 1,
+    remaining: result[1]
+  }
+
+}
+
+
+module.exports = {tokenBucketAllow, fixedWindowAllow, slidingWindowAllow};
