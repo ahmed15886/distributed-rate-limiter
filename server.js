@@ -6,8 +6,7 @@ const {client, connectRedis } = require('./redisClient');
 const { tokenBucketAllow, fixedWindowAllow, slidingWindowAllow} = require('./redisRateLimiter');
 
 const app = express();
-const PORT = 3000;
-
+const PORT = process.env.PORT || 3000;
 // Create one bucket per server instance for now
 // (we'll move this to Redis later)
 const bucket = createBucket(10,1); // 10 tokens, refill 1/sec
@@ -67,17 +66,14 @@ app.get('/api/sliding-window', (req, res) => {
 app.get('/api/redis/token-bucket', async (req, res) => {
   try {
     const result = await tokenBucketAllow('rate:global', 10, 1);
-    
     if (result.allowed) {
-      res.status(200).json({
-        message: 'Request allowed',
-        remaining: result.remaining
-      });
+      res.status(200)
+        .set('X-Served-By', `port-${PORT}`)
+        .json({ message: 'Request allowed', remaining: result.remaining });
     } else {
-      res.status(429).json({
-        message: 'Too many requests',
-        remaining: result.remaining
-      });
+      res.status(429)
+        .set('X-Served-By', `port-${PORT}`)
+        .json({ message: 'Too many requests', remaining: result.remaining });
     }
   } catch (err) {
     console.error('Rate limiter error:', err);
