@@ -112,10 +112,14 @@ app.get('/api/redis/sliding-window', async (req, res) => {
 
 
 async function startServer() {
-  await connectRedis();
+  try {
+    await connectRedis();
+  } catch (err) {
+    console.error('Redis unavailable at startup, continuing in degraded mode');
+  }
+
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
 }
-
 startServer();
