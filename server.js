@@ -4,6 +4,7 @@ const {createWindow, allowRequest: allowWindowRequest } = require('./fixedWindow
 const { createSlidingWindow, allowRequest: allowSlidingRequest } = require('./slidingWindow');
 const {client, connectRedis } = require('./redisClient');
 const { tokenBucketAllow, fixedWindowAllow, slidingWindowAllow} = require('./redisRateLimiter');
+const { unsafeTokenBucketAllow } = require('./unsafeRateLimiter');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -103,6 +104,25 @@ app.get('/api/redis/sliding-window', async (req, res) => {
       res.status(200).json({ message: 'Request allowed', remaining: result.remaining });
     } else {
       res.status(429).json({ message: 'Too many requests', remaining: result.remaining });
+    }
+  } catch (err) {
+    console.error('Rate limiter error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Deliberate demo: Redis without Lua (no atomicity). See unsafeRateLimiter.js
+app.get('/api/redis-unsafe/token-bucket', async (req, res) => {
+  try {
+    const result = await unsafeTokenBucketAllow('rate:unsafe', 10, 1);
+    if (result.allowed) {
+      res.status(200)
+        .set('X-Served-By', `port-${PORT}`)
+        .json({ message: 'Request allowed', remaining: result.remaining });
+    } else {
+      res.status(429)
+        .set('X-Served-By', `port-${PORT}`)
+        .json({ message: 'Too many requests', remaining: result.remaining });
     }
   } catch (err) {
     console.error('Rate limiter error:', err);

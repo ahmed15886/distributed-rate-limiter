@@ -76,10 +76,12 @@ Measured with k6, 100 virtual users each sending one request at the same moment 
 | Variation | Shared counter | Atomic | Allowed |
 |---|---|---|---|
 | In-memory per instance | No | No | 30 |
-| Redis, separate read and write | Yes | No | In progress |
+| Redis, separate read and write | Yes | No | 57, 100, 94 (three runs) |
 | Redis with Lua script | Yes | Yes | **10** |
 
 Redis with Lua: p95 latency 19 ms under the burst.
+
+The middle row isolates atomicity. State is shared, but the read and the write are separate commands, so concurrent requests read the same token count before any of them writes back. The result changes from run to run because it depends on how the requests interleave. The race does not need several instances: Node sends the next request's read while the previous one is still waiting, so even one instance overshoots.
 
 ### Fixed window boundary exploit
 
@@ -133,6 +135,7 @@ curl http://localhost/api/redis/token-bucket
 | `GET /api/redis/token-bucket` | Redis + Lua | Token bucket |
 | `GET /api/redis/fixed-window` | Redis + Lua | Fixed window |
 | `GET /api/redis/sliding-window` | Redis + Lua | Sliding window |
+| `GET /api/redis-unsafe/token-bucket` | Redis, no Lua | Token bucket, deliberately non-atomic demo |
 
 All routes return `200` when allowed and `429` when limited, with a JSON body containing `message` and `remaining`. The in-memory routes exist for comparison and only work correctly with a single instance.
 
@@ -166,6 +169,7 @@ node boundaryTest.js
 ├── server.js              Express app and routes
 ├── redisClient.js         Redis connection, reconnect strategy
 ├── redisRateLimiter.js    Runs Lua scripts with timeout, breaker and fail mode
+├── unsafeRateLimiter.js   Token bucket without Lua, deliberately non-atomic demo
 ├── circuitBreaker.js      CLOSED, OPEN, HALF_OPEN state machine
 ├── tokenBucket.js         In-memory token bucket
 ├── fixedWindow.js         In-memory fixed window
@@ -190,7 +194,7 @@ node boundaryTest.js
 
 ## Roadmap
 
-- [ ] Redis without Lua, to isolate the effect of atomicity
+- [x] Redis without Lua, to isolate the effect of atomicity
 - [ ] Algorithm comparison under steady load: latency and throughput
 - [ ] Middleware to replace the repeated route handlers
 - [ ] Per-user limits keyed by user or API key

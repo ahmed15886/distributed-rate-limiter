@@ -62,6 +62,7 @@ docker run --rm -i grafana/k6 run -e TARGET=/api/token-bucket - < loadtests/conc
 |---|---|
 | `server.js` | Express app, six routes, `startServer()` listens even if Redis is down |
 | `redisClient.js` | Client config, all options inside `socket`, reconnect strategy |
+| `unsafeRateLimiter.js` | `unsafeTokenBucketAllow`: token bucket with separate `hmGet` / `hSet`, no Lua, no breaker. Deliberate atomicity demo |
 | `redisRateLimiter.js` | `tokenBucketAllow`, `fixedWindowAllow`, `slidingWindowAllow`: breaker check, `withTimeout(..., 200)`, fail mode |
 | `circuitBreaker.js` | `createCircuitBreaker(3, 10000)`, `canAttempt`, `recordSuccess`, `recordFailure` |
 | `tokenBucket.js`, `fixedWindow.js`, `slidingWindow.js` | In-memory versions, kept for comparison |
@@ -71,7 +72,7 @@ docker run --rm -i grafana/k6 run -e TARGET=/api/token-bucket - < loadtests/conc
 | `nginx.conf` | Upstream `nodejs_servers`, round robin |
 | `docker-compose.yml` | Redis and NGINX services |
 
-Redis keys: `rate:global` (token bucket), `rate:fixed:global`, `rate:sliding:global`.
+Redis keys: `rate:global` (token bucket), `rate:fixed:global`, `rate:sliding:global`, `rate:unsafe` (non-atomic demo).
 
 Environment variables: `PORT` (default 3000), `FAIL_MODE` (`open` default, or `closed`).
 
@@ -89,6 +90,7 @@ Environment variables: `PORT` (default 3000), `FAIL_MODE` (`open` default, or `c
 |---|---|
 | 100 concurrent requests, Redis + Lua | 10 allowed, 90 limited, p95 19 ms |
 | Same burst, in-memory route | 30 allowed (10 per instance) |
+| Same burst, Redis without Lua | 57, 100, 94 allowed over three runs (Lua control in same session: 10) |
 | Fixed window across a boundary | 10 allowed in about 0.3 s, limit 5 |
 | Sliding window, same test | 5 allowed |
 | Breaker with Redis paused, 3 s timeout | requests 1 to 9 about 3 s, 10 to 12 about 0.01 s |
@@ -98,13 +100,13 @@ Environment variables: `PORT` (default 3000), `FAIL_MODE` (`open` default, or `c
 
 Phases 1 to 5 are done and merged. In Phase 6 (load testing).
 
-**Immediate next step: Redis without Lua.** Build `unsafeRateLimiter.js` with `unsafeTokenBucketAllow(key, capacity, refillRate)`: the same token bucket logic as `lua/tokenBucket.lua`, but `hmGet`, calculate in JavaScript, then `hSet` as a separate command. Clearly labelled as a deliberate demonstration. Add route `/api/redis-unsafe/token-bucket` using key `rate:unsafe`. Run the k6 burst against it. Expected: more than 10 allowed. This isolates atomicity, since in-memory vs Redis + Lua only proves shared state.
+Redis without Lua is done: `/api/redis-unsafe/token-bucket` allowed 57, 100 and 94 of 100 (limit 10), confirming atomicity matters independently of shared state.
 
 **Then, in order:**
 1. Algorithm comparison under steady load (latency, throughput) for all three Redis routes
 2. Merge `feature/load-testing` via a pull request
 3. Middleware to collapse the six near-identical route handlers
-4. Cleanups: remove the stopped `redis-rate-limiter` container, delete the obsolete `version` line in `docker-compose.yml`, rename the `window` variable in `server.js`
+4. Cleanups: delete the obsolete `version` line in `docker-compose.yml`, rename the `window` variable in `server.js`
 5. Per-user limits (key per user or API key)
 6. Unit tests for the three algorithms
 7. Full Docker Compose: Dockerfile, three app services, Redis host and NGINX upstreams switch to service names
@@ -118,7 +120,7 @@ Keep `README.md` in sync when results or structure change.
 
 - **node-redis options must be inside `socket`.** At the top level they are silently ignored. That once caused an infinite reconnect loop and a 5 second wait on every request.
 - **Use `127.0.0.1`, not `localhost`,** for Redis. Otherwise the client tries IPv6 `::1` first.
-- **Two Redis containers existed.** `redis-rate-limiter` is the old standalone one from Phase 1, now stopped. `rate-limiter-redis-1` is the Compose one. Starting the wrong one silently invalidates tests.
+- **Two Redis containers existed.** The old standalone `redis-rate-limiter` from Phase 1 is gone (checked 2026-10-10). `rate-limiter-redis-1` is the Compose one. If another Redis container ever appears, starting the wrong one silently invalidates tests.
 - **`docker stop` vs `docker pause`.** Stop makes Redis disappear, so calls fail fast. Pause freezes it with the connection open, so calls hang. Use pause to test the circuit breaker.
 - **The breaker is per instance.** With round robin, each instance sees a third of the requests, so it takes 3 failures per instance to trip. Breaker state only changes when a request arrives, not when Redis recovers.
 - **NGINX passive health checks.** After a failed connection, NGINX marks an upstream down for 10 seconds (`max_fails=1`, `fail_timeout=10s`). After restarting servers, wait before load testing, or you get "no live upstreams" 502s.
