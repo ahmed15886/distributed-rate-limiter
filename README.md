@@ -83,6 +83,30 @@ Redis with Lua: p95 latency 19 ms under the burst.
 
 The middle row isolates atomicity. State is shared, but the read and the write are separate commands, so concurrent requests read the same token count before any of them writes back. The result changes from run to run because it depends on how the requests interleave. The race does not need several instances: Node sends the next request's read while the previous one is still waiting, so even one instance overshoots.
 
+### Algorithm comparison under steady load
+
+k6 at a constant 200 requests per second for 30 seconds per route, through NGINX to three instances. `http_req_failed` was 0% in every run (429 counts as a valid answer).
+
+**Limit 10** (almost every request rejected). Run twice, the second time in reverse order:
+
+| Algorithm | p95, first order | p95, reverse order |
+|---|---|---|
+| Token bucket | 2.76 ms (ran 1st) | 1.82 ms (ran 3rd) |
+| Fixed window | 2.46 ms (2nd) | 2.25 ms (2nd) |
+| Sliding window | 1.28 ms (3rd) | 2.29 ms (1st) |
+
+The ranking follows run order, not algorithm. The differences are noise.
+
+**Limit 100,000** (every request allowed, so the sliding window log grows):
+
+| Algorithm | p95 | Key size after 6,000 requests |
+|---|---|---|
+| Token bucket | 2.67 ms | 99 bytes (hash) |
+| Fixed window | 2.64 ms | 95 bytes (hash) |
+| Sliding window | 2.65 ms | 563 KB (sorted set, 5,999 entries) |
+
+Latency is the same for all three. Each Lua script runs in microseconds, while the trip through NGINX and Node takes milliseconds. The real difference is memory: the sliding window log costs about 94 bytes per allowed request, and the other two stay constant. (5,999 entries instead of 6,000 because two requests arrived in the same millisecond, see Limitations.)
+
 ### Fixed window boundary exploit
 
 Limit of 5 requests per 5 seconds. Five requests just before a window boundary, five more just after.
@@ -156,6 +180,14 @@ docker run --rm -i grafana/k6 run -e TARGET=/api/token-bucket - < loadtests/conc
 
 k6 reports `429` responses as failed requests. For this test that is expected.
 
+Steady load, 200 requests per second for 30 seconds (`RATE` and `DURATION` override). Here 429 counts as a valid answer, so `http_req_failed` should be 0%:
+
+```bash
+docker run --rm -i grafana/k6 run -e TARGET=/api/redis/sliding-window - < loadtests/steady.js
+```
+
+Start the servers with `LIMIT=100000` to raise the limit on the three Redis + Lua routes (default 10).
+
 Boundary comparison:
 
 ```bash
@@ -180,7 +212,8 @@ node boundaryTest.js
 │   ├── fixedWindow.lua
 │   └── slidingWindow.lua
 ├── loadtests/
-│   └── concurrency.js     k6 burst test
+│   ├── concurrency.js     k6 burst test
+│   └── steady.js          k6 constant rate test
 ├── nginx.conf             Round robin across three instances
 └── docker-compose.yml     Redis and NGINX
 ```
@@ -195,7 +228,7 @@ node boundaryTest.js
 ## Roadmap
 
 - [x] Redis without Lua, to isolate the effect of atomicity
-- [ ] Algorithm comparison under steady load: latency and throughput
+- [x] Algorithm comparison under steady load: latency and throughput
 - [ ] Middleware to replace the repeated route handlers
 - [ ] Per-user limits keyed by user or API key
 - [ ] Unit tests for the three algorithms

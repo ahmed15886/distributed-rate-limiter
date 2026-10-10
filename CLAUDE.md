@@ -69,12 +69,13 @@ docker run --rm -i grafana/k6 run -e TARGET=/api/token-bucket - < loadtests/conc
 | `lua/*.lua` | Atomic Redis versions. Token bucket and fixed window use hashes, sliding window uses a sorted set |
 | `boundaryTest.js` | Shows the fixed window boundary exploit against sliding window |
 | `loadtests/concurrency.js` | k6 burst test, reads `__ENV.TARGET` |
+| `loadtests/steady.js` | k6 constant arrival rate, `TARGET`, `RATE` (200), `DURATION` (30s). 429 counted as expected, `errors` counter for anything else |
 | `nginx.conf` | Upstream `nodejs_servers`, round robin |
 | `docker-compose.yml` | Redis and NGINX services |
 
 Redis keys: `rate:global` (token bucket), `rate:fixed:global`, `rate:sliding:global`, `rate:unsafe` (non-atomic demo).
 
-Environment variables: `PORT` (default 3000), `FAIL_MODE` (`open` default, or `closed`).
+Environment variables: `PORT` (default 3000), `FAIL_MODE` (`open` default, or `closed`), `LIMIT` (default 10, Redis + Lua routes only).
 
 ## Git workflow
 
@@ -93,6 +94,8 @@ Environment variables: `PORT` (default 3000), `FAIL_MODE` (`open` default, or `c
 | Same burst, Redis without Lua | 57, 100, 94 allowed over three runs (Lua control in same session: 10) |
 | Fixed window across a boundary | 10 allowed in about 0.3 s, limit 5 |
 | Sliding window, same test | 5 allowed |
+| Steady 200 req/s, limit 10 | p95 1.3 to 2.8 ms, ranking follows run order, not algorithm |
+| Steady 200 req/s, limit 100,000 | p95 about 2.65 ms for all three. Memory: hashes about 100 bytes, sliding window 563 KB for 5,999 entries |
 | Breaker with Redis paused, 3 s timeout | requests 1 to 9 about 3 s, 10 to 12 about 0.01 s |
 | Breaker recovery | failed probe reopens, successful probe closes, both verified |
 
@@ -100,19 +103,18 @@ Environment variables: `PORT` (default 3000), `FAIL_MODE` (`open` default, or `c
 
 Phases 1 to 5 are done and merged. In Phase 6 (load testing).
 
-Redis without Lua is done: `/api/redis-unsafe/token-bucket` allowed 57, 100 and 94 of 100 (limit 10), confirming atomicity matters independently of shared state.
+Algorithm comparison is done: latency identical, memory is the difference. Redis without Lua is done: `/api/redis-unsafe/token-bucket` allowed 57, 100 and 94 of 100 (limit 10), confirming atomicity matters independently of shared state.
 
 **Then, in order:**
-1. Algorithm comparison under steady load (latency, throughput) for all three Redis routes
-2. Merge `feature/load-testing` via a pull request
-3. Middleware to collapse the six near-identical route handlers
-4. Cleanups: delete the obsolete `version` line in `docker-compose.yml`, rename the `window` variable in `server.js`
-5. Per-user limits (key per user or API key)
-6. Unit tests for the three algorithms
-7. Full Docker Compose: Dockerfile, three app services, Redis host and NGINX upstreams switch to service names
-8. TLA+ specification of the token bucket
-9. Rerun benchmarks on the final setup, update README tables
-10. Resume bullet and interview prep
+1. Merge `feature/load-testing` via a pull request
+2. Middleware to collapse the six near-identical route handlers
+3. Cleanups: delete the obsolete `version` line in `docker-compose.yml`, rename the `window` variable in `server.js`
+4. Per-user limits (key per user or API key)
+5. Unit tests for the three algorithms
+6. Full Docker Compose: Dockerfile, three app services, Redis host and NGINX upstreams switch to service names
+7. TLA+ specification of the token bucket
+8. Rerun benchmarks on the final setup, update README tables
+9. Resume bullet and interview prep
 
 Keep `README.md` in sync when results or structure change.
 
